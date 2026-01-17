@@ -4,6 +4,7 @@
 
 char Serial_RxPacket[SERIAL_BUF_SIZE];
 uint8_t Serial_RxFlag = 0;
+uint16_t Serial_RxLen = 0;
 
 static QueueHandle_t uart_queue;
 
@@ -68,49 +69,31 @@ void Serial_Printf(const char *format, ...)
 }
 
 /**
- * 串口接收任务（类似 STM32 的 HAL_UART_RxCpltCallback）
- * 接收格式：@开头，\r\n结尾
+ * 串口接收任务
+ * 接收格式：透传模式，直接转发所有接收到的数据
  */
 void Serial_Task(void *arg)
 {
-    uint8_t data;
-    int idx = 0;
-    uint8_t state = 0; // 0: 等待@，1: 记录数据，2: 等待\r\n
+    uint8_t data[128]; // 临时缓冲区
 
     while (1)
     {
-        int len = uart_read_bytes(SERIAL_UART_NUM, &data, 1, pdMS_TO_TICKS(20));
+        // 读取串口数据
+        int len = uart_read_bytes(SERIAL_UART_NUM, data, sizeof(data), pdMS_TO_TICKS(20));
         if (len > 0)
         {
-            if (state == 0)
+            // 如果缓冲区空闲，则拷贝数据
+            if (Serial_RxFlag == 0)
             {
-                if (data == '@' && Serial_RxFlag == 0)
-                {
-                    state = 1;
-                    idx = 0;
-                }
-            }
-            else if (state == 1)
-            {
-                if (data == '\r')
-                {
-                    state = 2;
-                }
-                else
-                {
-                    if (idx < SERIAL_BUF_SIZE - 1)
-                        Serial_RxPacket[idx++] = data;
-                }
-            }
-            else if (state == 2)
-            {
-                if (data == '\n')
-                {
-                    Serial_RxPacket[idx] = '\0';
-                    Serial_RxFlag = 1;
-                    state = 0;
-                }
+                // 防止溢出
+                if (len > SERIAL_BUF_SIZE - 1) len = SERIAL_BUF_SIZE - 1;
+                
+                memcpy(Serial_RxPacket, data, len);
+                Serial_RxPacket[len] = '\0'; // 添加字符串结束符(可选，方便打印)
+                Serial_RxLen = len;
+                Serial_RxFlag = 1; // 标记接收完成
             }
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

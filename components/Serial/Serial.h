@@ -15,6 +15,7 @@
 
 extern char Serial_RxPacket[SERIAL_BUF_SIZE];
 extern uint8_t Serial_RxFlag;
+extern uint16_t Serial_RxLen;
 
 void Serial_Init(void);
 void Serial_SendByte(uint8_t byte);

@@ -11,6 +11,7 @@
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "Bluetooth.h"
+#include "Serial.h"  // 引入串口库
 
 #define TAG "BLE_TEST"
 #define BUTTON_GPIO 0  // BOOT按键
@@ -39,6 +40,15 @@ void ble_connection_callback(bool connected) {
  * @brief 数据接收回调函数
  */
 void ble_data_received_callback(ble_service_id_t service_id, uint8_t *data, uint16_t len) {
+    // 处理SPP透传数据
+    if (service_id == BLE_SERVICE_SPP) {
+        // 将接收到的BLE数据通过串口转发
+        // 并在数据末尾添加换行符，方便观察
+        Serial_SendArray(data, len);
+        Serial_Printf("\n");
+        return;
+    }
+
     ESP_LOGI(TAG, "----------------------------------------");
     ESP_LOGI(TAG, "收到数据:");
     ESP_LOGI(TAG, "  服务: %s", service_id == BLE_SERVICE_A ? "Service A (传感器)" : "Service B (聊天)");
@@ -161,6 +171,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "IDF版本: %s", esp_get_idf_version());
     
+    // 初始化串口
+    Serial_Init();
+    ESP_LOGI(TAG, "✓ 串口初始化完成 (115200 8N1)");
+
     // 配置按键GPIO
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
@@ -175,6 +189,7 @@ void app_main(void) {
     // 配置蓝牙
     ble_config_t ble_config = {
         .device_name = "ABCCD",
+        .appearance = 0x0000, // 默认BLE
         .conn_cb = ble_connection_callback,
         .data_cb = ble_data_received_callback
     };
@@ -210,17 +225,32 @@ void app_main(void) {
         esp_restart();
     }
     
-    // 主循环 - 打印系统状态
+    // 主循环 - 检查串口数据并发送到BLE
     uint32_t loop_counter = 0;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(30000)); // 每30秒
-        
-        ESP_LOGI(TAG, "----------------------------------------");
-        ESP_LOGI(TAG, "系统运行时间: %ld 秒", loop_counter * 30);
-        ESP_LOGI(TAG, "连接状态: %s", BLE_IsConnected() ? "已连接" : "未连接");
-        ESP_LOGI(TAG, "空闲堆: %ld 字节", esp_get_free_heap_size());
-        ESP_LOGI(TAG, "----------------------------------------");
-        
-        loop_counter++;
+        // 检查是否有串口数据包
+        if (Serial_RxFlag) {
+            // 通过SPP服务发送到手机
+            if (BLE_IsConnected()) {
+                // 使用BLE_SendData发送原始二进制数据
+                BLE_SendData(BLE_SERVICE_SPP, (uint8_t*)Serial_RxPacket, Serial_RxLen);
+                ESP_LOGI(TAG, "串口 -> BLE SPP: %d 字节", Serial_RxLen);
+            } else {
+                ESP_LOGW(TAG, "收到串口数据但BLE未连接，丢弃 %d 字节", Serial_RxLen);
+            }
+            // 清除标志位
+            Serial_RxFlag = 0;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10)); // 防止看门狗触发
+
+        // 每30秒打印一次状态
+        if (loop_counter++ % 3000 == 0) {
+            ESP_LOGI(TAG, "----------------------------------------");
+            ESP_LOGI(TAG, "系统运行时间: %ld 秒", loop_counter / 100);
+            ESP_LOGI(TAG, "连接状态: %s", BLE_IsConnected() ? "已连接" : "未连接");
+            ESP_LOGI(TAG, "空闲堆: %ld 字节", esp_get_free_heap_size());
+            ESP_LOGI(TAG, "----------------------------------------");
+        }
     }
 }

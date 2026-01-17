@@ -19,12 +19,15 @@
 #define BLE_CHAR_UUID_A         0xAA01
 #define BLE_SERVICE_UUID_B      0x00BB
 #define BLE_CHAR_UUID_B         0xBB01
+#define BLE_SERVICE_UUID_SPP    0x00CC  // SPP服务UUID
+#define BLE_CHAR_UUID_SPP       0xCC01  // SPP特征UUID
 #define BLE_MAX_DATA_LEN        512
 
 /* 服务ID定义 */
 typedef enum {
-    BLE_SERVICE_A = 0,  // 传感器控制与读取服务
-    BLE_SERVICE_B = 1,  // 聊天服务
+    BLE_SERVICE_A = 0,    // 传感器控制与读取服务
+    BLE_SERVICE_B = 1,    // 聊天服务
+    BLE_SERVICE_SPP = 2,  // SPP透传服务
     BLE_SERVICE_MAX
 } ble_service_id_t;
 
@@ -39,6 +42,7 @@ typedef void (*ble_data_callback_t)(ble_service_id_t service_id, uint8_t *data, 
  */
 typedef struct {
     const char *device_name;            // 设备名称
+    uint16_t appearance;                // 设备外观 (0x0000为未知)
     ble_conn_callback_t conn_cb;        // 连接状态回调
     ble_data_callback_t data_cb;        // 数据接收回调
 } ble_config_t;
@@ -91,6 +95,13 @@ void BLE_GetMacAddress(uint8_t *mac);
  * @return ESP_OK 成功, 其他值失败
  */
 esp_err_t BLE_SetDeviceName(const char *name);
+
+/**
+ * @brief 设置设备外观 (Appearance)
+ * @param appearance 外观值 (例如 0x0080 代表计算机)
+ * @return ESP_OK 成功, 其他值失败
+ */
+esp_err_t BLE_SetAppearance(uint16_t appearance);
 
 /**
  * @brief 开始广播

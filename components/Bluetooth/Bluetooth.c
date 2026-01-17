@@ -29,15 +29,17 @@ static ble_conn_callback_t conn_callback = NULL;
 static ble_data_callback_t data_callback = NULL;
 
 /* 服务配置 */
-#define PROFILE_NUM 2   // 服务数量
+#define PROFILE_NUM 3   // 服务数量
 #define PROFILE_A_APP_ID 0      // Service A应用ID
 #define PROFILE_B_APP_ID 1      // Service B应用ID
-#define GATTS_NUM_HANDLE_TEST 4 // 每个服务的句柄数量
+#define PROFILE_SPP_APP_ID 2    // SPP Service应用ID
+#define GATTS_NUM_HANDLE_TEST 8 // 每个服务的句柄数量 (增加句柄数以防止不足)
 
 /* 前向声明 */
 //两个服务的事件处理函数
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param); // Service A事件处理函数
 static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param); // Service B事件处理函数
+static void gatts_profile_spp_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param); // Service SPP事件处理函数
 
 /* GATT Profile结构体 */
 struct gatts_profile_inst {
@@ -65,6 +67,10 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
         .gatts_cb = gatts_profile_b_event_handler, // Service B的回调函数
         .gatts_if = ESP_GATT_IF_NONE,              // 初始接口值
     },
+    [PROFILE_SPP_APP_ID] = {
+        .gatts_cb = gatts_profile_spp_event_handler, // Service SPP的回调函数
+        .gatts_if = ESP_GATT_IF_NONE,                // 初始接口值
+    },
 };
 
 /* Prepare write环境 */
@@ -73,13 +79,15 @@ typedef struct {
     int prepare_len;      // 准备写入长度
 } prepare_type_env_t;
 
-static prepare_type_env_t a_prepare_write_env;  // Service A的准备写环境
-static prepare_type_env_t b_prepare_write_env;  // Service B的准备写环境
+static prepare_type_env_t a_prepare_write_env;    // Service A的准备写环境
+static prepare_type_env_t b_prepare_write_env;    // Service B的准备写环境
+static prepare_type_env_t spp_prepare_write_env;  // Service SPP的准备写环境
 
 /* 初始属性值 */
 static uint8_t char1_str[] = {0x11, 0x22, 0x33};    // 特征初始值
 static esp_gatt_char_prop_t a_property = 0;         // Service A特征属性
 static esp_gatt_char_prop_t b_property = 0;         // Service B特征属性
+static esp_gatt_char_prop_t spp_property = 0;       // Service SPP特征属性
 
 static esp_attr_value_t gatts_demo_char1_val = {
     .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX, // 特征值最大长度
@@ -92,10 +100,12 @@ static uint8_t adv_config_done = 0;     // 广播配置完成标志
 #define adv_config_flag (1 << 0)        // 广播数据配置标志
 #define scan_rsp_config_flag (1 << 1)   // 扫描响应数据配置标志
 
-static uint8_t adv_service_uuid128[32] = {
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xAA, 0x00, 0x00, 0x00,
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xBB, 0x00, 0x00, 0x00,
-};  // 两个服务的UUID 服务A对应0xAA00，服务B对应0xBB00
+// 广播包最大只有31字节，无法同时广播3个128bit UUID (16*3=48字节)。
+// 这里只广播SPP服务UUID，这不影响连接后发现其他服务。
+static uint8_t adv_service_uuid128[16] = {
+    // BLE_SERVICE_UUID_SPP (0x00CC) 的128位形式
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xCC, 0x00, 0x00, 0x00,
+};
 
 //广播数据（必须有的。不管手机问不问，我都在喊。用来让手机发现设备。）
 static esp_ble_adv_data_t adv_data = {
@@ -457,6 +467,117 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     }
 }
 
+static void gatts_profile_spp_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+    switch (event) {
+    case ESP_GATTS_REG_EVT:
+        ESP_LOGI(TAG, "Service SPP: REGISTER_APP_EVT, status %d, app_id %d", param->reg.status, param->reg.app_id);
+        gl_profile_tab[PROFILE_SPP_APP_ID].service_id.is_primary = true;
+        gl_profile_tab[PROFILE_SPP_APP_ID].service_id.id.inst_id = 0x00;
+        gl_profile_tab[PROFILE_SPP_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
+        gl_profile_tab[PROFILE_SPP_APP_ID].service_id.id.uuid.uuid.uuid16 = BLE_SERVICE_UUID_SPP;
+
+        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_SPP_APP_ID].service_id, GATTS_NUM_HANDLE_TEST);
+        break;
+
+    case ESP_GATTS_READ_EVT: {
+        esp_gatt_rsp_t rsp;
+        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
+        rsp.attr_value.handle = param->read.handle;
+        rsp.attr_value.len = 0;
+        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+        break;
+    }
+
+    case ESP_GATTS_WRITE_EVT: {
+        ESP_LOGI(TAG, "Service SPP: GATT_WRITE_EVT, len=%d", param->write.len);
+        if (!param->write.is_prep && param->write.len > 0) {
+            esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+            
+            if (data_callback) {
+                data_callback(BLE_SERVICE_SPP, param->write.value, param->write.len);
+            }
+
+            if (gl_profile_tab[PROFILE_SPP_APP_ID].descr_handle == param->write.handle && param->write.len == 2) {
+                uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
+                if (descr_value == 0x0001) {
+                    ESP_LOGI(TAG, "Service SPP: notify enable");
+                } else if (descr_value == 0x0002) {
+                    ESP_LOGI(TAG, "Service SPP: indicate enable");
+                } else if (descr_value == 0x0000) {
+                    ESP_LOGI(TAG, "Service SPP: notify/indicate disable");
+                }
+            }
+        }
+        example_write_event_env(gatts_if, &spp_prepare_write_env, param);
+        break;
+    }
+
+    case ESP_GATTS_EXEC_WRITE_EVT:
+        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+        example_exec_write_event_env(&spp_prepare_write_env, param);
+        break;
+
+    case ESP_GATTS_MTU_EVT:
+        ESP_LOGI(TAG, "Service SPP: MTU %d", param->mtu.mtu);
+        current_mtu = param->mtu.mtu;
+        break;
+
+    case ESP_GATTS_CREATE_EVT:
+        ESP_LOGI(TAG, "Service SPP: CREATE_SERVICE_EVT, status %d", param->create.status);
+        gl_profile_tab[PROFILE_SPP_APP_ID].service_handle = param->create.service_handle;
+        gl_profile_tab[PROFILE_SPP_APP_ID].char_uuid.len = ESP_UUID_LEN_16;
+        gl_profile_tab[PROFILE_SPP_APP_ID].char_uuid.uuid.uuid16 = BLE_CHAR_UUID_SPP;
+
+        esp_ble_gatts_start_service(gl_profile_tab[PROFILE_SPP_APP_ID].service_handle);
+        
+        spp_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
+        esp_ble_gatts_add_char(gl_profile_tab[PROFILE_SPP_APP_ID].service_handle,
+                               &gl_profile_tab[PROFILE_SPP_APP_ID].char_uuid,
+                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                               spp_property,
+                               NULL, NULL);
+        break;
+
+    case ESP_GATTS_ADD_CHAR_EVT:
+        ESP_LOGI(TAG, "Service SPP: ADD_CHAR_EVT, status %d", param->add_char.status);
+        gl_profile_tab[PROFILE_SPP_APP_ID].char_handle = param->add_char.attr_handle;
+        gl_profile_tab[PROFILE_SPP_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
+        gl_profile_tab[PROFILE_SPP_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
+        
+        esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_SPP_APP_ID].service_handle,
+                                     &gl_profile_tab[PROFILE_SPP_APP_ID].descr_uuid,
+                                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, NULL, NULL);
+        break;
+
+    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+        gl_profile_tab[PROFILE_SPP_APP_ID].descr_handle = param->add_char_descr.attr_handle;
+        ESP_LOGI(TAG, "Service SPP: ADD_DESCR_EVT");
+        break;
+
+    case ESP_GATTS_START_EVT:
+        ESP_LOGI(TAG, "Service SPP: SERVICE_START_EVT");
+        break;
+
+    case ESP_GATTS_CONNECT_EVT:
+        ESP_LOGI(TAG, "Service SPP: CONNECT_EVT, conn_id %d", param->connect.conn_id);
+        gl_profile_tab[PROFILE_SPP_APP_ID].conn_id = param->connect.conn_id;
+        break;
+
+    case ESP_GATTS_DISCONNECT_EVT:
+        ESP_LOGI(TAG, "Service SPP: DISCONNECT_EVT");
+        break;
+
+    case ESP_GATTS_CONF_EVT:
+        if (param->conf.status != ESP_GATT_OK) {
+            ESP_LOGE(TAG, "Service SPP: CONF_EVT error");
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
 static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
     case ESP_GATTS_REG_EVT:
@@ -684,6 +805,11 @@ esp_err_t BLE_Init(ble_config_t *config) {
         }
     }
 
+    // 设置设备外观
+    if (config) {
+        BLE_SetAppearance(config->appearance);
+    }
+
     // 注册GATTS回调
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
     if (ret) {
@@ -706,6 +832,12 @@ esp_err_t BLE_Init(ble_config_t *config) {
     }
 
     ret = esp_ble_gatts_app_register(PROFILE_B_APP_ID);
+    if (ret) {
+        ESP_LOGE(TAG, "GATTS app register error: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = esp_ble_gatts_app_register(PROFILE_SPP_APP_ID);
     if (ret) {
         ESP_LOGE(TAG, "GATTS app register error: %s", esp_err_to_name(ret));
         return ret;
@@ -827,6 +959,21 @@ esp_err_t BLE_SetDeviceName(const char *name) {
         return ESP_ERR_INVALID_ARG;
     }
     return esp_ble_gap_set_device_name(name);
+}
+
+esp_err_t BLE_SetAppearance(uint16_t appearance) {
+    adv_data.appearance = appearance;
+    scan_rsp_data.appearance = appearance;
+    
+    // 如果蓝牙已初始化，立即更新广播数据
+    if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED) {
+        esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
+        if (ret != ESP_OK) return ret;
+        
+        return esp_ble_gap_config_adv_data(&scan_rsp_data);
+    }
+    
+    return ESP_OK;
 }
 
 esp_err_t BLE_StartAdvertising(void) {
