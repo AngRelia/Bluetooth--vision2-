@@ -684,6 +684,11 @@ esp_err_t BLE_Init(ble_config_t *config) {
         }
     }
 
+    // 设置设备外观
+    if (config) {
+        BLE_SetAppearance(config->appearance);
+    }
+
     // 注册GATTS回调
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
     if (ret) {
@@ -827,6 +832,21 @@ esp_err_t BLE_SetDeviceName(const char *name) {
         return ESP_ERR_INVALID_ARG;
     }
     return esp_ble_gap_set_device_name(name);
+}
+
+esp_err_t BLE_SetAppearance(uint16_t appearance) {
+    adv_data.appearance = appearance;
+    scan_rsp_data.appearance = appearance;
+    
+    // 如果蓝牙已初始化，立即更新广播数据
+    if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED) {
+        esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
+        if (ret != ESP_OK) return ret;
+        
+        return esp_ble_gap_config_adv_data(&scan_rsp_data);
+    }
+    
+    return ESP_OK;
 }
 
 esp_err_t BLE_StartAdvertising(void) {

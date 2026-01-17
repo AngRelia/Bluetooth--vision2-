@@ -175,6 +175,7 @@ void app_main(void) {
     // 配置蓝牙
     ble_config_t ble_config = {
         .device_name = "ABCCD",
+        .appearance = 0x0000, // 默认BLE
         .conn_cb = ble_connection_callback,
         .data_cb = ble_data_received_callback
     };
