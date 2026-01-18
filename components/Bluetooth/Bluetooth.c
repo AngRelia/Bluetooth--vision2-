@@ -608,33 +608,36 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         break;
     }
 
-    case ESP_GATTS_WRITE_EVT: {
+case ESP_GATTS_WRITE_EVT: {
         // 写请求事件
-        ESP_LOGI(TAG, "Service B: GATT_WRITE_EVT, len=%d", param->write.len);
-        if (!param->write.is_prep && param->write.len > 0) {
-            // 非Prepare Write，直接处理数据
-            esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+        ESP_LOGI(TAG, "Service A: GATT_WRITE_EVT, len=%d", param->write.len);
+        if (!param->write.is_prep) {
             
-            // 调用数据接收回调，通知应用层
-            if (data_callback) {
-                data_callback(BLE_SERVICE_B, param->write.value, param->write.len);
+            // 【修改核心】：只有当写入目标是“特征值句柄”时，才视为有效数据
+            if (gl_profile_tab[PROFILE_A_APP_ID].char_handle == param->write.handle) {
+                // 打印数据
+                esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+                
+                // 调用回调通知 main.c (应用层)
+                if (data_callback && param->write.len > 0) {
+                    data_callback(BLE_SERVICE_A, param->write.value, param->write.len);
+                }
             }
 
-            // 处理CCC (Client Characteristic Configuration) 描述符写入
-            // 客户端通过写入此描述符来开启/关闭 Notify 或 Indicate
-            if (gl_profile_tab[PROFILE_B_APP_ID].descr_handle == param->write.handle && param->write.len == 2) {
+            // 【独立处理】：如果是 CCCD (描述符) 写入，只做日志打印，不通知应用层
+            if (gl_profile_tab[PROFILE_A_APP_ID].descr_handle == param->write.handle && param->write.len == 2) {
                 uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
                 if (descr_value == 0x0001) {
-                    ESP_LOGI(TAG, "Service B: notify enable");
+                    ESP_LOGI(TAG, "Service A: notify enable");
                 } else if (descr_value == 0x0002) {
-                    ESP_LOGI(TAG, "Service B: indicate enable");
+                    ESP_LOGI(TAG, "Service A: indicate enable");
                 } else if (descr_value == 0x0000) {
-                    ESP_LOGI(TAG, "Service B: notify/indicate disable");
+                    ESP_LOGI(TAG, "Service A: notify/indicate disable");
                 }
             }
         }
         // 处理写响应和Prepare Write逻辑
-        example_write_event_env(gatts_if, &b_prepare_write_env, param);
+        example_write_event_env(gatts_if, &a_prepare_write_env, param);
         break;
     }
 
