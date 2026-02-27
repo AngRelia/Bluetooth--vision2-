@@ -1,3 +1,4 @@
+# 区别于Bluetooth-LE-SPP-to-hc-08这个仓库 Bluetooth--vision2- ！！！主要是以ESP32为从机，发起广播让手机（主机）连接他，接发收数据
 # _Sample project_
 
 (See the README.md file in the upper level 'examples' directory for more information about examples.)
